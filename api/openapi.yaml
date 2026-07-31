@@ -1,0 +1,163 @@
+openapi: 3.1.0
+info:
+  title: Code Review Agent Platform API
+  version: 0.1.0
+  description: API-first contract for triggering framework-aware code reviews.
+servers:
+  - url: https://api.example.com
+paths:
+  /reviews:
+    post:
+      summary: Run a code review
+      description: Triggers a review for a pull request and returns the structured review result.
+      operationId: createReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+      responses:
+        '200':
+          description: Structured review result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '202':
+          description: Review accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewAccepted'
+  /reviews/{run_id}:
+    get:
+      summary: Get a review result
+      operationId: getReview
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Structured review result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '404':
+          description: Review not found
+components:
+  schemas:
+    ReviewRequest:
+      type: object
+      required:
+        - owner
+        - repo
+        - pr_number
+      properties:
+        owner:
+          type: string
+          description: Repository owner.
+        repo:
+          type: string
+          description: Repository name.
+        pr_number:
+          type: integer
+          minimum: 1
+        framework:
+          type: string
+          description: Optional framework hint such as dotnet, python, or react.
+          default: auto
+        callback_url:
+          type: string
+          format: uri
+          description: Optional webhook for asynchronous completion.
+        run_id:
+          type: string
+          description: Optional caller-supplied run identifier.
+    ReviewAccepted:
+      type: object
+      required:
+        - run_id
+        - status
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+        review_url:
+          type: string
+          format: uri
+    ReviewResult:
+      type: object
+      required:
+        - run_id
+        - pr_number
+        - status
+        - summary
+        - findings
+      properties:
+        run_id:
+          type: string
+        pr_number:
+          type: integer
+        status:
+          type: string
+          enum:
+            - PASS
+            - FAIL
+        summary:
+          type: object
+          required:
+            - total_findings
+            - high_or_critical
+          properties:
+            total_findings:
+              type: integer
+              minimum: 0
+            high_or_critical:
+              type: integer
+              minimum: 0
+        findings:
+          type: array
+          items:
+            type: object
+            required:
+              - rule
+              - category
+              - severity
+              - file
+              - start_line
+              - end_line
+              - description
+              - code_snippet
+            properties:
+              rule:
+                type: string
+              category:
+                type: string
+              severity:
+                type: string
+                enum:
+                  - LOW
+                  - MEDIUM
+                  - HIGH
+                  - CRITICAL
+              file:
+                type: string
+              start_line:
+                type: integer
+                minimum: 1
+              end_line:
+                type: integer
+                minimum: 1
+              description:
+                type: string
+              code_snippet:
+                type: string
