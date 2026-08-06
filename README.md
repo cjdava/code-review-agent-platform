@@ -1,14 +1,14 @@
 # code-review-agent-platform
 
-A generic, API-first code review platform that can power .NET, Python, and React review agents.
+A generic, API-first code review platform that can power review agents across multiple domains such as .NET, Python, React, QA, and database reviews.
 
-The goal is to keep the review engine framework-agnostic while loading framework-specific best-practices packs at runtime.
+The goal is to keep the review engine domain-agnostic while loading domain-specific review packs and standards at runtime.
 
 ## What this repo owns
 
 - API contract for triggering a review
 - Shared review result schema
-- Framework routing and selection
+- Domain routing and selection
 - Async job handling for CI/CD triggers
 - Provider integrations such as Bitbucket webhooks or pipeline calls
 
@@ -32,10 +32,12 @@ code-review-agent-platform/
 ├── api/
 │   └── openapi.yaml
 ├── core/
-├── frameworks/
+├── domains/
 │   ├── dotnet/
 │   ├── python/
-│   └── react/
+│   ├── react/
+│   ├── qa/
+│   └── database/
 └── README.md
 ```
 
