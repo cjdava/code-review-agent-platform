@@ -2,7 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import requests
+
 from core.standards_loader import get_standards_content
+from tools.github_tools import list_repo_file_paths
 
 
 @dataclass
@@ -33,7 +36,24 @@ def resolve_frameworks(repo_files: Optional[list[str]] = None, framework_hint: s
         frameworks.append("react")
     if ".sln" in normalized or ".csproj" in normalized:
         frameworks.append("dotnet")
+    if "playwright.config" in normalized or "cypress.config" in normalized or "/e2e/" in normalized:
+        frameworks.append("qa")
+    if ".sql" in normalized or ".sqlproj" in normalized or "/migrations/" in normalized:
+        frameworks.append("database")
     return frameworks or ["dotnet"]
+
+
+def resolve_frameworks_for_repo(owner: str, repo: str, framework_hint: str = "auto") -> list[str]:
+    """Resolve frameworks for a real repo, fetching its file tree when the hint is "auto"."""
+    if framework_hint and framework_hint != "auto":
+        return resolve_frameworks(framework_hint=framework_hint)
+
+    try:
+        repo_files = list_repo_file_paths(owner, repo)
+    except requests.RequestException:
+        return ["dotnet"]
+
+    return resolve_frameworks(repo_files=repo_files, framework_hint="auto")
 
 
 def get_framework_pack(framework: str) -> FrameworkPack:

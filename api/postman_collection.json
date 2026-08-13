@@ -1,0 +1,132 @@
+{
+  "info": {
+    "name": "Code Review Agent Platform",
+    "description": "Debugging collection for the local FastAPI service in app.py. Start the server with `uvicorn app:app --reload` before running requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "owner", "value": "cjdava" },
+    { "key": "repo", "value": "PeerReviewSample" },
+    { "key": "pr_number", "value": "29" },
+    { "key": "run_id", "value": "review-29" }
+  ],
+  "item": [
+    {
+      "name": "Health / Docs",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/docs", "host": ["{{base_url}}"], "path": ["docs"] }
+      }
+    },
+    {
+      "name": "Create Review - Auto-detect framework (last run, verified working)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29\n}"
+        },
+        "description": "Exactly matches the request that was executed and confirmed working (FAIL, 8 findings, 6 HIGH/CRITICAL). No framework field sent, so it defaults to auto."
+      }
+    },
+    {
+      "name": "Create Review - dotnet",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"dotnet\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - python",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"python\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - react",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"react\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - qa",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"qa\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - database",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"database\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - multi-domain (python,qa)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"python,qa\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Review - custom run_id",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/reviews", "host": ["{{base_url}}"], "path": ["reviews"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"cjdava\",\n  \"repo\": \"PeerReviewSample\",\n  \"pr_number\": 29,\n  \"framework\": \"auto\",\n  \"run_id\": \"review-29\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Review by run_id (NOT IMPLEMENTED - expect 404/405)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/reviews/{{run_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["reviews", "{{run_id}}"]
+        },
+        "description": "Documented in api/openapi.yaml but not implemented in app.py yet. Kept here as a placeholder for when it's added."
+      }
+    }
+  ]
+}

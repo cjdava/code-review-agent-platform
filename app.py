@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal
 
-from core.router import combine_standards, detect_framework, get_framework_pack, get_framework_packs, resolve_frameworks
+from core.router import combine_standards, get_framework_pack, get_framework_packs, resolve_frameworks_for_repo
 
 app = FastAPI(title="Code Review Agent Platform", version="0.1.0")
 
@@ -44,9 +44,9 @@ class ReviewResult(BaseModel):
 def create_review(request: ReviewRequest) -> ReviewResult:
     run_id = request.run_id or f"review-{request.pr_number}"
 
-    frameworks = resolve_frameworks(framework_hint=request.framework)
+    frameworks = resolve_frameworks_for_repo(request.owner, request.repo, framework_hint=request.framework)
     packs = get_framework_packs(frameworks)
-    primary_pack = packs[0] if packs else get_framework_pack(detect_framework(framework_hint=request.framework))
+    primary_pack = packs[0] if packs else get_framework_pack("dotnet")
 
     try:
         module = __import__(primary_pack.module_name)

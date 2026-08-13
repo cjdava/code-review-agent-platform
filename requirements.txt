@@ -3,5 +3,5 @@ uvicorn
 pydantic
 pydantic-settings
 requests
-strands
+strands-agents
 openai

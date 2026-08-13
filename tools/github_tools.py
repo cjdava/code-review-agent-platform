@@ -26,6 +26,15 @@ def _error(message: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"json": {"error": message}}]}
 
 
+def list_repo_file_paths(owner: str, repo: str) -> list[str]:
+    """Fetch the repository's blob file paths directly (no tool/agent wrapping)."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
+    response = requests.get(url, headers=_github_headers(), timeout=settings.request_timeout)
+    response.raise_for_status()
+    data = response.json()
+    return [item["path"] for item in data.get("tree", []) if item.get("type") == "blob"]
+
+
 @tool(context=True)
 def get_pr_files(owner: str, repo: str, pr_number: int, tool_context: ToolContext) -> dict[str, Any]:
     """Get changed files for a pull request."""
@@ -66,15 +75,11 @@ def get_pr_diff(owner: str, repo: str, pr_number: int, tool_context: ToolContext
 @tool(context=True)
 def get_repo_files(owner: str, repo: str, tool_context: ToolContext) -> dict[str, Any]:
     """Get the repository file tree for repository context."""
-    url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
     try:
-        response = requests.get(url, headers=_github_headers(), timeout=settings.request_timeout)
-        response.raise_for_status()
+        files = list_repo_file_paths(owner, repo)
     except requests.RequestException as exc:
         return _error(str(exc))
 
-    data = response.json()
-    files = [item["path"] for item in data.get("tree", []) if item.get("type") == "blob"]
     return _success({"files": files[:1000]})
 
 
