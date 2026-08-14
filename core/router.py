@@ -11,7 +11,6 @@ from tools.github_tools import list_repo_file_paths
 @dataclass
 class FrameworkPack:
     name: str
-    module_name: str
     prompt_dir: Path
     standards_content: Optional[str] = None
 
@@ -61,34 +60,29 @@ def get_framework_pack(framework: str) -> FrameworkPack:
     if framework_name in {"python", "py"}:
         return FrameworkPack(
             name="python",
-            module_name="generic_agent",
             prompt_dir=Path(__file__).resolve().parent.parent / "domains" / "python" / "prompts",
             standards_content=get_standards_content("python"),
         )
     if framework_name in {"react", "js", "ts"}:
         return FrameworkPack(
             name="react",
-            module_name="generic_agent",
             prompt_dir=Path(__file__).resolve().parent.parent / "domains" / "react" / "prompts",
             standards_content=get_standards_content("react"),
         )
     if framework_name in {"qa", "quality-assurance"}:
         return FrameworkPack(
             name="qa",
-            module_name="generic_agent",
             prompt_dir=Path(__file__).resolve().parent.parent / "domains" / "qa" / "prompts",
             standards_content=get_standards_content("qa"),
         )
     if framework_name in {"database", "db", "mssql"}:
         return FrameworkPack(
             name="database",
-            module_name="generic_agent",
             prompt_dir=Path(__file__).resolve().parent.parent / "domains" / "database" / "prompts",
             standards_content=get_standards_content("database"),
         )
     return FrameworkPack(
         name="dotnet",
-        module_name="generic_agent",
         prompt_dir=Path(__file__).resolve().parent.parent / "domains" / "dotnet" / "prompts",
         standards_content=get_standards_content("dotnet"),
     )

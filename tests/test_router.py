@@ -15,7 +15,6 @@ def test_get_framework_pack_supports_domain_packs(monkeypatch) -> None:
     pack = get_framework_pack("qa")
     assert isinstance(pack, FrameworkPack)
     assert pack.name == "qa"
-    assert pack.module_name == "generic_agent"
     assert pack.prompt_dir == Path(__file__).resolve().parents[1] / "domains" / "qa" / "prompts"
 
 
@@ -24,7 +23,6 @@ def test_get_framework_pack_supports_database_packs(monkeypatch) -> None:
     pack = get_framework_pack("database")
     assert isinstance(pack, FrameworkPack)
     assert pack.name == "database"
-    assert pack.module_name == "generic_agent"
     assert pack.prompt_dir == Path(__file__).resolve().parents[1] / "domains" / "database" / "prompts"
 
 

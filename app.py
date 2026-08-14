@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 from core.router import combine_standards, get_framework_pack, get_framework_packs, resolve_frameworks_for_repo
+from generic_agent import run_agent
 
 app = FastAPI(title="Code Review Agent Platform", version="0.1.0")
 
@@ -49,9 +50,7 @@ def create_review(request: ReviewRequest) -> ReviewResult:
     primary_pack = packs[0] if packs else get_framework_pack("dotnet")
 
     try:
-        module = __import__(primary_pack.module_name)
-        runner = getattr(module, "run_agent")
-        result = runner(
+        result = run_agent(
             request.owner,
             request.repo,
             request.pr_number,
