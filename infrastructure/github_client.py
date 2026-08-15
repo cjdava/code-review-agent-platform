@@ -43,6 +43,7 @@ def get_pr_files(owner: str, repo: str, pr_number: int, tool_context: ToolContex
         response = requests.get(url, headers=_github_headers(), timeout=settings.request_timeout)
         response.raise_for_status()
     except requests.RequestException as exc:
+        logger.warning("get_pr_files failed owner=%s repo=%s pr=%s: %s", owner, repo, pr_number, exc)
         return _error(str(exc))
 
     files = response.json()
@@ -67,6 +68,7 @@ def get_pr_diff(owner: str, repo: str, pr_number: int, tool_context: ToolContext
         response = requests.get(url, headers=_github_headers({"Accept": "application/vnd.github.v3.diff"}), timeout=settings.request_timeout)
         response.raise_for_status()
     except requests.RequestException as exc:
+        logger.warning("get_pr_diff failed owner=%s repo=%s pr=%s: %s", owner, repo, pr_number, exc)
         return _error(str(exc))
 
     return _success({"diff": response.text[:8000]})
@@ -78,6 +80,7 @@ def get_repo_files(owner: str, repo: str, tool_context: ToolContext) -> dict[str
     try:
         files = list_repo_file_paths(owner, repo)
     except requests.RequestException as exc:
+        logger.warning("get_repo_files failed owner=%s repo=%s: %s", owner, repo, exc)
         return _error(str(exc))
 
     return _success({"files": files[:1000]})
@@ -91,6 +94,7 @@ def find_repo_files(owner: str, repo: str, contains: str, suffix: str = "", limi
         response = requests.get(url, headers=_github_headers(), timeout=settings.request_timeout)
         response.raise_for_status()
     except requests.RequestException as exc:
+        logger.warning("find_repo_files failed owner=%s repo=%s: %s", owner, repo, exc)
         return _error(str(exc))
 
     data = response.json()
@@ -119,14 +123,22 @@ def get_repo_file_content(owner: str, repo: str, path: str, ref: str = "HEAD", m
         response = requests.get(url, headers=_github_headers(), params={"ref": ref}, timeout=settings.request_timeout)
         response.raise_for_status()
     except requests.RequestException as exc:
+        logger.warning("get_repo_file_content failed owner=%s repo=%s path=%s: %s", owner, repo, path, exc)
         return _error(str(exc))
 
     data = response.json()
-    encoded_content = data.get("content", "")
-    normalized_limit = max(1, min(max_chars, 50000))
-    try:
-        decoded_content = base64.b64decode(encoded_content).decode("utf-8", errors="replace")
-    except binascii.Error as exc:
-        return _error(f"Failed to decode file content for {path}: {exc}")
+    if data.get("encoding") != "base64" or "content" not in data:
+        return _error("Unexpected response format from GitHub contents API")
 
-    return _success({"path": path, "ref": ref, "content": decoded_content[:normalized_limit], "truncated": len(decoded_content) > normalized_limit})
+    try:
+        raw_bytes = base64.b64decode(data["content"])
+    except (binascii.Error, ValueError) as exc:
+        return _error(f"Failed to decode file content: {exc}")
+
+    clamped_max = max(1, min(max_chars, 50000))
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return _error("File is not valid UTF-8 text")
+
+    return _success({"path": path, "ref": ref, "content": text[:clamped_max], "truncated": len(text) > clamped_max})

@@ -1,8 +1,10 @@
 import os
 from typing import Optional
+import logging
 
 import requests
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_STANDARDS_REPO = os.getenv(
     "STANDARDS_REPO_URL",
@@ -26,6 +28,11 @@ def get_standards_content(framework: str, standards_repo_url: Optional[str] = No
         path = "backend/dotnet-standards.md"
 
     url = f"{repo_url.rstrip('/')}/{path}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
+    logger.info("Fetching standards content framework=%s url=%s", framework_name, url)
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.error("Failed to fetch standards framework=%s url=%s: %s", framework_name, url, exc)
+        raise
     return response.text

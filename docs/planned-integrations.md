@@ -2,22 +2,51 @@
 
 Status: **draft / not yet implemented**. Captured from a design discussion on 2026-08-13. Intended to be groomed further (e.g. with Kiro or similar spec tools) before implementation.
 
+## Near-term — Async execution & result persistence (applies to the existing `/reviews` endpoint, not just the future Bitbucket webhook)
+
+**Motivation:** `POST /reviews` currently blocks synchronously for 30s+ while the agent runs (real network + LLM latency observed in testing), and the `ReviewResult` is only ever returned in the HTTP response body — nothing is persisted, so there's no way to look up a past run's result later. This is already flagged in the README's observations (API/spec drift: `202`/`GET /reviews/{run_id}` are documented in `api/openapi.yaml` but never implemented).
+
+Needed pieces:
+
+- **Async execution:** return `202 {run_id, status: "queued"}` immediately and run the review in the background. See "Async processing & run/process tracking design" further below — the same options (in-process background task, SQS + worker, Step Functions, AgentCore async tasks) apply here too, not only for the Bitbucket webhook.
+- **Result persistence:** save the `ReviewResult` (plus run status/timestamps) to a database instead of discarding it after the response is sent. Minimum viable shape: a `reviews` record keyed by `run_id` storing `owner`, `repo`, `pr_number`, `framework`, `status`, `summary`, `findings` (JSON), `created_at`, `completed_at`.
+  - Fits the existing clean-architecture boundary as a new adapter, e.g. `infrastructure/review_repository.py` — `application/review_service.run_review` would call a `save_result(result)` port after the agent finishes, and `GET /reviews/{run_id}` would read from it.
+  - DB choice not yet decided — SQLite/local for a single instance, DynamoDB if the Step Functions path is chosen, Postgres if a more general relational store is preferred. Needs a team decision.
+- **`GET /reviews/{run_id}`**: already documented, never implemented — becomes the read path once results are persisted.
+
+## Near-term — Review quality feedback / reward signal for the agent
+
+**Motivation:** nothing today captures whether a given `ReviewResult` was actually good. A bad review (false positives, missed real issues, wrong severity) goes completely unflagged, and there's no signal that feeds back into improving future runs.
+
+**Status:** needs grooming — this is a research/design question (what "reward" means, who provides feedback, how it's scored) more than a ready-to-build engineering task.
+
+Draft pieces to groom:
+
+- A feedback mechanism for a human reviewer to mark a completed review as good/bad, or per-finding as correct/incorrect/false-positive — e.g. a `POST /reviews/{run_id}/feedback` endpoint, or a reaction on the PR comment once Phase 1's "post findings back as a PR comment" work lands.
+- Persist that feedback alongside the stored `ReviewResult` (same `infrastructure/review_repository.py` piece above) so it can be queried/aggregated later.
+- Open question — what "reward" means here. Options to groom, roughly lightest to heaviest:
+  1. Observability/metrics only (e.g. "% of reviews flagged bad by domain") — no automated adjustment. Likely the right starting point.
+  2. A scoring signal used to A/B test or manually tune prompts per domain pack (`domains/<name>/prompts/`) over time.
+  3. Input to a future fine-tuning/RLHF-style pass, if the platform ever trains a model instead of only prompting one.
+- None of this should block Phase 1/2 below — it's a parallel workstream once feedback capture (option 1) is groomed.
+
 ## Phase 1 — PR-created webhook → auto-review (Bitbucket)
 
 **Trigger:** a pull request is opened/updated in **Bitbucket** — this is the actual target provider for this integration.
 
 **Goal:** automatically call the existing review pipeline (`POST /reviews` logic) instead of requiring a manual API call.
 
-**Important:** this repo's tooling currently only supports GitHub (`tools/github_tools.py` calls `api.github.com` exclusively). Since the real target is Bitbucket, this plan includes **extending the platform with Bitbucket support** as a prerequisite, not an optional later step.
+**Important:** this repo's tooling currently only supports GitHub (`infrastructure/github_client.py` calls `api.github.com` exclusively). Since the real target is Bitbucket, this plan includes **extending the platform with Bitbucket support** as a prerequisite, not an optional later step.
 
 ### New pieces needed
 
 - **Bitbucket provider tools** — new equivalents of the 5 existing GitHub tools (`get_pr_files`, `get_pr_diff`, `get_repo_files`, `find_repo_files`, `get_repo_file_content` / `list_repo_file_paths`) built against the Bitbucket REST API (Cloud or Server/Data Center — needs confirming which), since Bitbucket's auth scheme, diff format, and PR object shape all differ from GitHub's.
-- `POST /webhooks/bitbucket` in [app.py](../app.py) — receives Bitbucket's pull request webhook event (e.g. `pullrequest:created` / `pullrequest:updated`), verifies the request signature/secret, extracts `owner` / `repo` (workspace/project + repo slug for Bitbucket) / `pr_number`, and invokes the same pipeline `/reviews` uses today.
-- **Async processing is required.** Webhook receivers typically expect a fast response, but a real review takes 30s+ (observed in testing). This is the natural place to finally implement the `202` accepted flow already documented in [api/openapi.yaml](../api/openapi.yaml) but never built. See "Async processing & run tracking design" below for how to implement the `run_id` / process tracking piece without building a bespoke service.
+- `POST /webhooks/bitbucket` in [api/routes.py](../api/routes.py) — receives Bitbucket's pull request webhook event (e.g. `pullrequest:created` / `pullrequest:updated`), verifies the request signature/secret, extracts `owner` / `repo` (workspace/project + repo slug for Bitbucket) / `pr_number`, and invokes the same use case `application/review_service.run_review` uses today.
+- **Async processing is required.** Webhook receivers typically expect a fast response, but a real review takes 30s+ (observed in testing). This is the natural place to finally implement the `202` accepted flow already documented in [api/openapi.yaml](../api/openapi.yaml) but never built — reuse the same async execution + persistence work from the "Near-term" section above rather than building it twice. See "Async processing & run tracking design" below for how to implement the `run_id` / process tracking piece without building a bespoke service.
 - **Result delivery:** post findings back as a PR comment (new tool, e.g. `post_pr_comment`, via Bitbucket's PR comments API) instead of only returning JSON that nobody looks at.
 - **Idempotency:** dedupe by commit SHA so repeated "updated" events don't trigger redundant, paid OpenAI runs.
-- **Provider seam:** extract a small `GitProvider` interface (shared method signatures for PR files/diff/repo tree/file content) so `GitHubProvider` (already built, used for local/personal testing) and the new `BitbucketProvider` can both plug into `generic_agent.py` via `owner` / `repo` + a `provider` field, without duplicating the agent-building logic.
+- **Provider seam:** extract a small `GitProvider` interface (shared method signatures for PR files/diff/repo tree/file content) so `GitHubProvider` (already built, used for local/personal testing) and the new `BitbucketProvider` can both plug into `infrastructure/agent_runner.py` via `owner` / `repo` + a `provider` field, without duplicating the agent-building logic.
+
 
 ### Async processing & run/process tracking design
 
@@ -68,13 +97,15 @@ The goal: `POST /webhooks/bitbucket` responds immediately with a `run_id` (a pro
 
 Mirrors the pattern already proven in this repo:
 - A new prompt pack (`domains/docs/prompts/`) defining the docs-agent's persona and workflow.
-- A new structured output model describing "proposed doc changes" (analogous to `ReviewResult` in [generic_agent.py](../generic_agent.py)).
+- A new structured output model describing "proposed doc changes" (analogous to `ReviewResult` in [domain/models.py](../domain/models.py)).
 - New tools to read the docs repo, create a branch, commit changes, and open a PR — reusing the same `Agent` / `structured_output_model` pattern used for reviews.
 
 ## Suggested sequencing
 
-1. Groom Phase 2's open questions with the team.
-2. Extend the platform with Bitbucket provider support (new tools + `/webhooks/bitbucket` + async processing + PR comment delivery) — self-contained, well-scoped, no blocked decisions.
-3. Implement Phase 2 once format/structure and safety model are agreed.
+1. Groom the review feedback/reward-signal open questions (near-term section above) — start with observability-only (option 1) as the low-risk first step.
+2. Build async execution + result persistence for the existing `/reviews` endpoint (near-term section above) — unblocks both the Bitbucket webhook's async requirement and `GET /reviews/{run_id}`.
+3. Groom Phase 2's open questions with the team.
+4. Extend the platform with Bitbucket provider support (new tools + `/webhooks/bitbucket` + PR comment delivery, reusing the async/persistence work from step 2) — self-contained, well-scoped, no blocked decisions.
+5. Implement Phase 2 once format/structure and safety model are agreed.
 
 Note: local/personal testing can continue against GitHub in the meantime (already working end-to-end), since the `GitProvider` seam lets both providers coexist.

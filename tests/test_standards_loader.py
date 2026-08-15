@@ -1,6 +1,6 @@
 import requests
 
-from core.standards_loader import get_standards_content
+from infrastructure.standards_loader import get_standards_content
 
 
 def test_get_standards_content_raises_when_remote_fetch_fails(monkeypatch) -> None:

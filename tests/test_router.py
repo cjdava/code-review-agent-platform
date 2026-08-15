@@ -2,8 +2,8 @@ from pathlib import Path
 
 import requests
 
-from core import router
-from core.router import FrameworkPack, detect_framework, get_framework_pack, resolve_frameworks, resolve_frameworks_for_repo
+from application import framework_resolver as router
+from application.framework_resolver import FrameworkPack, detect_framework, get_framework_pack, resolve_frameworks, resolve_frameworks_for_repo
 
 
 def test_detect_framework_prefers_explicit_hint() -> None:

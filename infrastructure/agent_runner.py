@@ -5,10 +5,9 @@ from typing import Literal
 from strands import Agent
 from strands.models.openai import OpenAIModel
 
-from models import Finding, ReviewResult, ReviewSummary
-
 from config import settings
-from tools.github_tools import (
+from domain.models import Finding, ReviewResult, ReviewSummary
+from infrastructure.github_client import (
     find_repo_files,
     get_pr_diff,
     get_pr_files,
@@ -16,9 +15,9 @@ from tools.github_tools import (
     get_repo_files,
 )
 
-DEFAULT_PROMPTS_DIR = Path(__file__).parent / "prompts"
+# Falls back to <project_root>/prompts/ when no domain prompt_dir is provided.
+DEFAULT_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
 
