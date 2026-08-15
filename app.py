@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import Literal
 
 from core.router import combine_standards, get_framework_pack, get_framework_packs, resolve_frameworks_for_repo
 from generic_agent import run_agent
+from models import Finding as ReviewFinding, ReviewResult, ReviewSummary
 
 app = FastAPI(title="Code Review Agent Platform", version="0.1.0")
 
@@ -15,30 +15,6 @@ class ReviewRequest(BaseModel):
     framework: str = "auto"
     callback_url: str | None = None
     run_id: str | None = None
-
-
-class ReviewFinding(BaseModel):
-    rule: str
-    category: str
-    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-    file: str
-    start_line: int = Field(ge=1)
-    end_line: int = Field(ge=1)
-    description: str
-    code_snippet: str
-
-
-class ReviewSummary(BaseModel):
-    total_findings: int = Field(ge=0)
-    high_or_critical: int = Field(ge=0)
-
-
-class ReviewResult(BaseModel):
-    run_id: str
-    pr_number: int
-    status: Literal["PASS", "FAIL"]
-    summary: ReviewSummary
-    findings: list[ReviewFinding] = Field(default_factory=list)
 
 
 @app.post("/reviews", response_model=ReviewResult)
