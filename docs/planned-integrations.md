@@ -8,10 +8,10 @@ Status: **draft / not yet implemented**. Captured from a design discussion on 20
 
 Needed pieces:
 
-- **Async execution:** return `202 {run_id, status: "queued"}` immediately and run the review in the background. See "Async processing & run/process tracking design" further below — the same options (in-process background task, SQS + worker, Step Functions, AgentCore async tasks) apply here too, not only for the Bitbucket webhook.
-- **Result persistence:** save the `ReviewResult` (plus run status/timestamps) to a database instead of discarding it after the response is sent. Minimum viable shape: a `reviews` record keyed by `run_id` storing `owner`, `repo`, `pr_number`, `framework`, `status`, `summary`, `findings` (JSON), `created_at`, `completed_at`.
-  - Fits the existing clean-architecture boundary as a new adapter, e.g. `infrastructure/review_repository.py` — `application/review_service.run_review` would call a `save_result(result)` port after the agent finishes, and `GET /reviews/{run_id}` would read from it.
-  - DB choice not yet decided — SQLite/local for a single instance, DynamoDB if the Step Functions path is chosen, Postgres if a more general relational store is preferred. Needs a team decision.
+- **Async execution:** return `202 {run_id, status: "queued"}` immediately and run the review via **AWS Lambda Durable Functions** — a Lambda function using the AWS Durable Execution SDK where workflow steps (run review, save result) are wrapped in `steps` for automatic checkpointing/retry, and any pause between steps uses `waits` that suspend the function without incurring compute charges. The durable execution ID serves as `run_id`. See "Async processing & run/process tracking design" further below for the full option comparison.
+- **Result persistence:** save the `ReviewResult` (plus run status/timestamps) to **DynamoDB** instead of discarding it after the response is sent. Minimum viable shape: a `reviews` table with `run_id` as the partition key, storing `owner`, `repo`, `pr_number`, `framework`, `status`, `summary`, `findings` (serialised JSON), `created_at`, `completed_at`.
+  - Fits the existing clean-architecture boundary as a new adapter: `infrastructure/review_repository.py` — `application/review_service.run_review` calls a `save_result(result)` method after the agent finishes, and `GET /reviews/{run_id}` reads from it via a `get_result(run_id)` method.
+  - DynamoDB pairs naturally with **Lambda Durable Functions** (both AWS-native, IAM-based auth, no connection pool to manage) and keeps `run_id` as the lookup key end-to-end. `GET /reviews/{run_id}` reads from DynamoDB once the durable function writes the result.
 - **`GET /reviews/{run_id}`**: already documented, never implemented — becomes the read path once results are persisted.
 
 ## Near-term — Review quality feedback / reward signal for the agent
@@ -50,30 +50,34 @@ Draft pieces to groom:
 
 ### Async processing & run/process tracking design
 
-The goal: `POST /webhooks/bitbucket` responds immediately with a `run_id` (a process/job identifier), the review runs in the background, and something lets you check status/result later — conceptually the same role a "Process Service" plays (start a process, get an ID back, poll or get notified of completion). A few options, roughly ordered from lightest to most managed:
+The goal: the API handler responds immediately with a `run_id`, the review runs in the background, and `GET /reviews/{run_id}` lets you check status/result later. Options, roughly lightest to most managed:
 
-1. **In-process background task + status store (simplest, works today)**
-   - FastAPI `BackgroundTasks` (or a lightweight in-process thread) runs the review after returning `{"run_id": ..., "status": "queued"}` immediately.
-   - A small status store (e.g. a DynamoDB table `run_id -> {status, result, timestamps}`, or even a local SQLite table for a single-instance deployment) backs `GET /reviews/{run_id}`.
-   - Downside: no built-in retry, no cross-instance durability if `app.py` runs on more than one instance/container, and a crash mid-review loses that run's state.
+1. **In-process background task + DynamoDB (simplest, works today)**
+   - FastAPI `BackgroundTasks` runs the review after returning `{"run_id": ..., "status": "queued"}` immediately; writes result to DynamoDB on completion.
+   - No built-in retry; a crash mid-review loses that run's state. Viable as a spike before real infra is provisioned.
 
-2. **SQS queue + worker + DynamoDB status table (decoupled, still self-built)**
-   - Webhook handler pushes a message (`owner`, `repo`, `pr_number`, `run_id`) onto an SQS queue and immediately returns `202` with the `run_id`.
-   - A separate worker (Lambda, or an ECS/Fargate task) consumes the queue, runs the review, and writes status/result to DynamoDB keyed by `run_id`.
-   - `GET /reviews/{run_id}` just reads from DynamoDB. This is durable and scales, but it's still infrastructure you build and operate yourselves — closer to "build our own Process Service on AWS primitives" than reusing something managed.
+2. **SQS + Lambda worker + DynamoDB (decoupled, durable delivery)**
+   - API handler enqueues a message onto SQS and returns `202`; a Lambda function with an SQS event-source mapping consumes it, runs the review, writes to DynamoDB.
+   - SQS provides at-least-once delivery and a dead-letter queue, but Lambda compute runs continuously during the full review — no sleep-without-compute.
 
-3. **AWS Step Functions (closest managed equivalent to a "Process Service")**
-   - Starting a Step Functions execution (`StartExecution`) returns an **execution ARN** — this can serve directly as the `run_id`/process id.
-   - Status is queryable anytime via `DescribeExecution` (`RUNNING` / `SUCCEEDED` / `FAILED` / `TIMED_OUT`), with built-in execution history, retries, and timeouts — essentially a managed version of what an internal "Process Service" provides, without building or maintaining the tracking store yourselves.
-   - The webhook handler would start an execution (a state machine step invokes the review logic, e.g. via a Lambda task), return the execution ARN as `run_id` immediately, and `GET /reviews/{run_id}` would call `DescribeExecution` under the hood.
-   - Best fit if the team wants a managed "process tracking" answer rather than rolling a custom DynamoDB/SQS setup.
+3. **AWS Lambda Durable Functions + DynamoDB (decided)**
+   - Uses the [AWS Durable Execution SDK](https://docs.aws.amazon.com/durable-execution/) (Python), available in Lambda natively. Business logic is written as normal sequential Python code using two primitives:
+     - `steps` — wrap compute work (e.g. fetch standards, run agent, save result) with automatic checkpointing and built-in retry. This is the only primitive needed for the initial async review flow.
+     - `waits` — relevant once the reward/feedback feature lands: a completed review could pause for a human rating signal before the workflow continues, without incurring compute charges during that idle period.
+   - The durable execution ID serves as `run_id`. Can execute for up to one year.
+   - Unlike Step Functions, workflow logic lives in code (not a graph DSL/visual designer), which keeps it version-controlled alongside the rest of the application and avoids a separate orchestration service.
+   - Writes final `ReviewResult` to DynamoDB; `GET /reviews/{run_id}` reads from there.
 
-4. **Amazon Bedrock AgentCore Runtime's built-in async task tracking (if we pursue AgentCore hosting)**
-   - AgentCore Runtime (see the earlier "deploy to AWS" discussion) has native async support via the `bedrock-agentcore` SDK: call `app.add_async_task(...)` when a task starts and `app.complete_async_task(task_id)` when it finishes; the platform tracks task state and reports it through the required `/ping` health endpoint (`Healthy` / `HealthyBusy`) automatically.
-   - The `runtimeSessionId` used to invoke the agent doubles as the process identifier, and `InvokeAgentRuntime`/session status calls let you check on it — so if we deploy there, we effectively get "process tracking" for free instead of building any of options 1–3.
-   - Only worth it if/when we actually move hosting to AgentCore Runtime; not a reason to adopt AgentCore on its own.
+4. **AWS Step Functions + Lambda + DynamoDB**
+   - Step Functions state machine orchestrates Lambda tasks; execution ARN is the `run_id`; `Wait` states pause without compute. Fully managed with zero maintenance and native integrations to 220+ AWS services.
+   - Better fit if the workflow needs visual design or cross-service orchestration beyond what a Lambda-native SDK provides. Not chosen here since Lambda Durable Functions keeps everything in code.
 
-**Recommendation for grooming:** start with option 1 for a quick working version, but if the team wants a real answer to "how do we track process status" without hand-rolling it, **Step Functions (option 3)** is the most direct AWS-native replacement for a bespoke Process Service. Revisit if/when AgentCore Runtime hosting (option 4) is adopted, since that would make it moot.
+5. **Amazon Bedrock AgentCore Runtime (if we pursue AgentCore hosting)**
+   - Built-in async task tracking via the `bedrock-agentcore` SDK. Only relevant if hosting moves to AgentCore Runtime; not a reason to adopt it on its own.
+
+**Decided:** option 3 — **Lambda Durable Functions + DynamoDB**. DynamoDB was already chosen for result persistence above.
+
+**Recommendation for grooming:** option 1 (in-process background task + DynamoDB) is the right spike before Lambda Durable infra is provisioned — the DynamoDB persistence layer is identical, so it's a straight swap of the async compute piece when ready.
 
 ### Notes / risks carried over from architecture review
 
