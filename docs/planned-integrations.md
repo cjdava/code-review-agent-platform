@@ -8,11 +8,48 @@ Status: **draft / not yet implemented**. Captured from a design discussion on 20
 
 Needed pieces:
 
-- **Async execution:** return `202 {run_id, status: "queued"}` immediately and run the review via **AWS Lambda Durable Functions** — a Lambda function using the AWS Durable Execution SDK where workflow steps (run review, save result) are wrapped in `steps` for automatic checkpointing/retry, and any pause between steps uses `waits` that suspend the function without incurring compute charges. The durable execution ID serves as `run_id`. See "Async processing & run/process tracking design" further below for the full option comparison.
+- **Async execution:** return `202 {run_id, status: "queued"}` immediately and run the review via **AWS Lambda Durable Functions** — a Lambda function using the AWS Durable Execution SDK where workflow steps (run review, save result) are wrapped in `steps` for automatic checkpointing/retry, and any pause between steps uses `waits` that suspend the function without incurring compute charges. The durable execution ID serves as `run_id`. See "Async processing & run/process tracking design" further below for the full option comparison and the 3-component Lambda architecture.
 - **Result persistence:** save the `ReviewResult` (plus run status/timestamps) to **DynamoDB** instead of discarding it after the response is sent. Minimum viable shape: a `reviews` table with `run_id` as the partition key, storing `owner`, `repo`, `pr_number`, `framework`, `status`, `summary`, `findings` (serialised JSON), `created_at`, `completed_at`.
   - Fits the existing clean-architecture boundary as a new adapter: `infrastructure/review_repository.py` — `application/review_service.run_review` calls a `save_result(result)` method after the agent finishes, and `GET /reviews/{run_id}` reads from it via a `get_result(run_id)` method.
   - DynamoDB pairs naturally with **Lambda Durable Functions** (both AWS-native, IAM-based auth, no connection pool to manage) and keeps `run_id` as the lookup key end-to-end. `GET /reviews/{run_id}` reads from DynamoDB once the durable function writes the result.
 - **`GET /reviews/{run_id}`**: already documented, never implemented — becomes the read path once results are persisted.
+
+### Lambda component layout (3 functions + DynamoDB)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  1. API Lambda                                      │
+│  app.py / api/routes.py                             │
+│                                                     │
+│  - Webhook / POST /reviews entry point              │
+│  - Validates request, generates run_id              │
+│  - Invokes Durable Lambda async (fire & forget)     │
+│  - Returns 202 {run_id} immediately                 │
+│  - GET /reviews/{run_id} reads from DynamoDB        │
+└────────────────────┬────────────────────────────────┘
+                     │ async invoke
+┌────────────────────▼────────────────────────────────┐
+│  2. Durable Lambda (orchestrator)                   │
+│  application/review_workflow.py  (new)              │
+│                                                     │
+│  step("resolve_frameworks")  →  framework_resolver  │
+│  step("fetch_standards")     →  standards_loader    │
+│  step("run_agent")  ─────────────────────────────┐  │
+│  step("save_result")         →  DynamoDB         │  │
+└──────────────────────────────────────────────────┼──┘
+                                                   │ invokes
+┌──────────────────────────────────────────────────▼──┐
+│  3. Agent Lambda                                    │
+│  infrastructure/agent_runner.py                     │
+│                                                     │
+│  - Receives owner/repo/pr/standards/prompt_dir      │
+│  - Calls GitHub tools + OpenAI                      │
+│  - Returns ReviewResult                             │
+│  - Has its own memory/timeout config                │
+└─────────────────────────────────────────────────────┘
+```
+
+The Agent Lambda is its own function because it is the heaviest piece (30s+, GitHub + OpenAI calls) — it gets its own memory/timeout settings independent of the orchestrator. The Durable Lambda only coordinates: when the `run_agent` step fires it invokes the Agent Lambda, checkpoints the result when it returns, and retries automatically on failure without rerunning the steps before it.
 
 ## Near-term — Review quality feedback / reward signal for the agent
 
